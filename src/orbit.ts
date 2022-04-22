@@ -1,6 +1,12 @@
 import { Authenticator } from "./authenticator";
 import { Blob } from "./blob";
+import { generateHostSIWEMessage, host, HostConfig } from "sdk";
 import { KV } from "./kv";
+import { WalletProvider } from "./walletProvider";
+
+if (typeof fetch === "undefined") {
+  const fetch = require("node-fetch");
+}
 
 /**
  * A connection to an orbit in a Kepler instance.
@@ -8,13 +14,13 @@ import { KV } from "./kv";
  * This class provides methods for interacting with an orbit. Construct an instance of this class using {@link Kepler.orbit}.
  */
 export class OrbitConnection {
-  private oid: string;
+  private orbitId: string;
   private kv: KV;
 
   /** @ignore */
-  constructor(keplerUrl: string, oid: string, authn: Authenticator) {
-    this.kv = new KV(keplerUrl, oid, authn);
-    this.oid = oid;
+  constructor(keplerUrl: string, authn: Authenticator) {
+    this.orbitId = authn.getOrbitId();
+    this.kv = new KV(keplerUrl, authn);
   }
 
   /** Get the id of the connected orbit.
@@ -22,7 +28,7 @@ export class OrbitConnection {
    * @returns The id of the connected orbit.
    */
   id(): string {
-    return this.oid;
+    return this.orbitId;
   }
 
   /** Store an object in the connected orbit.
@@ -159,18 +165,18 @@ export class OrbitConnection {
    * {@link https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream | ReadableStream},
    * by supplying request parameters:
    * ```ts
-   * let data = await orbitConnection.get('key', {streamBody: true}).then(
+   * let data = await orbitConnection.list("", {streamBody: true}).then(
    *   ({ data }: { data?: ReadableStream }) => {
    *     // consume the stream
    *   }
    * );
    * ```
    *
-   * @param key The key with which the object is indexed.
+   * @param prefix The prefix that the returned keys should have.
    * @param req Optional request parameters.
    * @returns A {@link Response} with the `data` property as a string[].
    */
-  async list(req?: Request): Promise<Response> {
+  async list(prefix: string = "", req?: Request): Promise<Response> {
     const request = req || {};
     const streamBody = request.streamBody || false;
 
@@ -185,7 +191,7 @@ export class OrbitConnection {
       return { ok, status, statusText, headers, data };
     };
 
-    return this.kv.list().then(transformResponse);
+    return this.kv.list(prefix).then(transformResponse);
   }
 
   /** Retrieve metadata about an object from the connected orbit.
@@ -237,23 +243,16 @@ export type Response = {
 
 type FetchResponse = globalThis.Response;
 
-/** Configuration for the session key. */
-export type SessionOptions = {
-  /** Time that the session key is valid from. */
-  notBefore?: Date;
-  /** Time that the session key is valid until. */
-  expirationTime?: Date;
-};
-
-/** Configuration for the orbit connection. */
-export type ConnectionOptions = {
-  /** ID of the orbit to connect to.
-   *
-   * If omitted, then the orbit ID will be derived from the wallet's ethereum address.
-   */
-  orbit?: string;
-  /** Actions to delegate to the session key. */
-  actions?: string[];
-  /** Configuration for the session key. */
-  sessionOpts?: SessionOptions;
+export const hostOrbit = async (wallet: WalletProvider, keplerUrl: string, orbitId: string, domain: string = window.location.hostname): Promise<Response> => {
+  const address = await wallet.getAddress();
+  const chainId = await wallet.getChainId();
+  const issuedAt = new Date(Date.now()).toISOString();
+  const peerId = await fetch(keplerUrl + '/peer/generate').then(res => res.text());
+  const config: HostConfig = {
+    address, chainId, domain, issuedAt, orbitId, peerId
+  };
+  const siwe = generateHostSIWEMessage(JSON.stringify(config));
+  const signature = await wallet.signMessage(siwe);
+  const hostHeaders = host(JSON.stringify({siwe, signature}));
+  return fetch(keplerUrl + '/delegate', { method: "POST", headers: JSON.parse(hostHeaders) }).then(({ ok, status, statusText, headers }) => ({ ok, status, statusText, headers }));
 };

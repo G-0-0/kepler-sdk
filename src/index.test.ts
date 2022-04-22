@@ -2,6 +2,7 @@ import { Kepler, OrbitConnection, Response } from "./";
 import Blob from "fetch-blob";
 import fetch from "node-fetch";
 import { Wallet } from "ethers";
+import { defaultAuthn } from "./authenticator";
 
 function expectSuccess(response: Response): Response {
   expect(response.status).toBe(200);
@@ -18,6 +19,20 @@ function newWallet(): Wallet {
   wallet.getChainId = () => Promise.resolve(1);
   return wallet;
 }
+
+describe("Authenticator test", () => {
+  it("invoke", async () => {
+    (global as any).window = { location: { hostname: "example.com" } };
+    let a = await defaultAuthn(newWallet(), {expirationTime: '3000-01-01T00:00:00.000Z', issuedAt: '2022-01-01T00:00:00.000Z'});
+    await a.invocationHeaders("get", "path");
+  })
+
+  it("host", async () => {
+    (global as any).window = { location: { hostname: "example.com" } };
+    let a = await defaultAuthn(newWallet(), {expirationTime: '3000-01-01T00:00:00.000Z', issuedAt: '2022-01-01T00:00:00.000Z'});
+    await a.invocationHeaders("get", "path");
+  })
+})
 
 describe("Kepler Client", () => {
   let orbit: OrbitConnection;
@@ -166,7 +181,7 @@ describe("Kepler Client", () => {
 
   it("undelegated account cannot access a different orbit", async () => {
     await new Kepler(newWallet(), keplerConfig)
-      .orbit({ orbit: orbit.id() })
+      .orbit({ orbitId: orbit.id() })
       .then((orbit) => orbit.list())
       .then(expectUnauthorised);
   });
@@ -174,7 +189,7 @@ describe("Kepler Client", () => {
   it("expired session key cannot be used", async () => {
     await new Kepler(newWallet(), keplerConfig)
       .orbit({
-        sessionOpts: { expirationTime: new Date(Date.now() - 1000 * 60 * 60) },
+        expirationTime: new Date(Date.now() - 1000 * 60 * 60).toISOString() ,
       })
       .then((orbit) => orbit.list())
       .then(expectUnauthorised);
